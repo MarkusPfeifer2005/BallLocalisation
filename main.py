@@ -1,10 +1,17 @@
 #!/usr/bin/env python3.9
 
 import cv2
+from tkinter import Tk
+from tkinter.filedialog import askopenfilename
 
 
 def main():
-    vid = cv2.VideoCapture(r"D:\datasets\oscillation\vid1.mp4")
+    Tk().withdraw()
+    filename = askopenfilename()
+    if not filename.endswith(".mp4"):
+        print(f"File '{filename}' is invalid. It must be an mp4 file.")
+        exit(0)
+    vid = cv2.VideoCapture(filename)
     tracker = cv2.TrackerCSRT_create()
 
     _, img = vid.read()
