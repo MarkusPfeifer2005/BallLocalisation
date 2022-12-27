@@ -1,7 +1,6 @@
 #!/usr/bin/env python3.9
 
 import cv2
-import os
 import csv
 from tkinter import Tk
 from tkinter.filedialog import askopenfilename
