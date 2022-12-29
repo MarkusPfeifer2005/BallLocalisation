@@ -5,7 +5,6 @@ import csv
 import numpy as np
 import tkinter as tk
 from tkinter.filedialog import askopenfilename
-from collections.abc import Generator
 import math
 
 
@@ -19,13 +18,12 @@ def get_bbox_center(bbox: list[int]) -> tuple[int, int]:
 
 class Image:
     scale = None  # Length per pixel.
-    center = None
+    origin = None
 
     def __init__(self, pixels: np.ndarray, time: float):
         self.pixels = pixels
         self.time = time
         self.bbox = None
-
         self._line = []
 
     def _draw_line(self, event, x, y, flags, param):
@@ -35,7 +33,7 @@ class Image:
             else:
                 self._line = [(x, y)]
 
-    def get_scale(self):
+    def set_scale(self):
         print("Select two points by double clicking, and press enter to continue.")
         cv2.namedWindow("img")
         cv2.setMouseCallback("img", self._draw_line)
@@ -52,7 +50,6 @@ class Image:
                 cv2.destroyAllWindows()
                 exit(0)
 
-            print(self._line)
             cv2.imshow("img", self.numpy)
             cv2.waitKey(1)
             distance = get_distance(self._line[0], self._line[1])
@@ -67,11 +64,33 @@ class Image:
 
     def get_elongation(self, direction: str) -> float:
         if direction.lower() == 'x':
-            return (self.center_of_mass[0] - self.center[0]) * self.scale
+            return (self.center_of_mass[0] - self.origin[0]) * self.scale
         elif direction.lower() == 'y':
-            return (self.center_of_mass[1] - self.center[1]) * self.scale
+            return (self.center_of_mass[1] - self.origin[1]) * self.scale
         else:
             raise ValueError(f"Direction '{direction}' is invalid; must be 'x' or 'y'!")
+
+    @staticmethod
+    def _select_point(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDBLCLK:
+            Image.origin = (x, y)
+
+    def set_origin(self):
+        print("Select origin by double clicking, and press enter to continue.")
+        cv2.namedWindow("img")
+        cv2.setMouseCallback("img", self._select_point)
+        try:
+            while cv2.getWindowProperty("img", 1) != -1:
+                cv2.imshow("img", self.numpy)
+                if cv2.waitKey(33) == 13:  # If enter is pressed.
+                    break
+        except cv2.error:
+            pass
+        finally:
+            cv2.destroyAllWindows()
+            if not self.origin:
+                print("No origin was selected!")
+                exit(0)
 
     @property
     def numpy(self):
@@ -83,7 +102,15 @@ class Image:
             pixels = cv2.putText(pixels, f"({round(self.get_elongation('x'), 1)}|{round(self.get_elongation('y'), 1)})",
                                  self.center_of_mass, cv2.FONT_HERSHEY_SIMPLEX, .5, (255, 0, 0), 1)
         if len(self._line) == 2:
-            pixels = cv2.line(self.pixels, self._line[0], self._line[1], (255, 0, 0), 3)
+            pixels = cv2.line(pixels, self._line[0], self._line[1], (255, 0, 0), 3)
+        if self.origin:
+            length = 3
+            top_point = (self.origin[0], self.origin[1] + length)
+            bottom_point = (self.origin[0], self.origin[1] - length)
+            right_point = (self.origin[0] + length, self.origin[1])
+            left_point = (self.origin[0] - length, self.origin[1])
+            pixels = cv2.line(pixels, top_point, bottom_point, (255, 0, 0), 1)
+            pixels = cv2.line(pixels, left_point, right_point, (255, 0, 0), 1)
         return pixels
 
     @center_of_mass.setter
@@ -92,33 +119,32 @@ class Image:
 
 
 class Video:
-    def __init__(self, path: str, fps: float):
-        self.images = cv2.VideoCapture(path)
-        self.time_per_image = 1. / fps
-        self._time = 0.
+    fps: float = 100.
 
-    def watch(self) -> Generator[Image]:
-        try:
-            while cv2.getWindowProperty("img", 1) != -1:
-                success, img = self.images.read()
-                if success:
-                    yield Image(pixels=img, time=self._time)
-                else:
-                    break
-                self._time += self.time_per_image
-        except cv2.error:
-            print("Application was closed by the user.")
+    def __init__(self, path: str):  # Loads whole video into memory!
+        time_per_image = 1. / self.fps
+        self.images = []
+        cap = cv2.VideoCapture(path)
+        success = True
+        time = 0
+        while success:
+            success, image = cap.read()
+            if success:
+                self.images.append(Image(image, time))
+                time += time_per_image
 
-    def get_frame(self) -> Image:
-        _, img = self.images.read()
-        self._time += self.time_per_image
-        return Image(img, time=self._time - self.time_per_image)
+    def __iter__(self):
+        for image in self.images:
+            yield image
+
+    def __getitem__(self, item):
+        return self.images[item]
+
+    def __len__(self):
+        return self.images.get(cv2.CAP_PROP_FRAME_COUNT)
 
 
 def main():
-    # Define fps.
-    fps: float = 100.
-
     # Select file.
     window = tk.Tk()
     window.withdraw()
@@ -127,36 +153,34 @@ def main():
         print(f"File '{filename}' is invalid. It must be an mp4 file.")
         exit(0)
 
-    # Define Video and Tracker.
-    video = Video(filename, fps=fps)
+    video = Video(filename)
     tracker = cv2.TrackerCSRT_create()
 
-    # Extract first frame.
-    image = video.get_frame()
+    video[0].set_scale()
+    video[-1].set_origin()
 
-    # Get scale.
-    image.get_scale()
-
-    # Initialize tracker.
-    bbox = cv2.selectROI("img", image.pixels, showCrosshair=True)
-    Image.center = get_bbox_center(bbox)
+    # Initialize the tracker.
+    image = video[0]
+    bbox = cv2.selectROI("img", image.numpy, showCrosshair=True)
     tracker.init(image.pixels, bbox)
 
     with open(filename.replace(".mp4", ".csv"), 'w', newline='') as csv_file:
         csv_writer = csv.writer(csv_file, delimiter=',')
         csv_writer.writerow(["time [s]", "x elongation [cm]", "y elongation [cm]"])
-
-        for image in video.watch():
-            success, bbox = tracker.update(image.pixels)
-            if success:
-                image.bbox = bbox
-                csv_writer.writerow([image.time, image.get_elongation('x'), image.get_elongation('y')])
-            else:
-                break
-            cv2.imshow("img", image.numpy)
-            cv2.waitKey(1)
-
-        cv2.destroyAllWindows()
+        try:
+            for image in video:
+                success, bbox = tracker.update(image.pixels)
+                if success and cv2.getWindowProperty("img", 1) != -1:
+                    image.bbox = bbox
+                    csv_writer.writerow([image.time, image.get_elongation('x'), image.get_elongation('y')])
+                else:
+                    break
+                cv2.imshow("img", image.numpy)
+                cv2.waitKey(1)
+        except cv2.error:
+            print("Program was closed by the user.")
+        finally:
+            cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
