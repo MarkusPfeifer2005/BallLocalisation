@@ -5,7 +5,8 @@ Usage:
 2. Select a mp4 file.
 3. Select two points by double-clicking twice on the image and confirming with [enter].
 4. Enter a reference value (in cm) of the selected distance.
-5. Select an object you want to track by holding the left mouse button pressed and create a bounding box.
+5. Enter a point as the center for the pendulum, be double-clicking on the image.
+6. Select an object you want to track by holding the left mouse button pressed and create a bounding box.
 
 The application then creates a csv file in the directory of the video.
 Be aware that the video is displayed upside down. Since this has no effect on the intended usage, it
