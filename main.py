@@ -21,35 +21,27 @@ class Image:
     scale = None  # Length per pixel.
     center = None
 
-    def __init__(self, pixels: np.ndarray,
-                 time: float,
-                 bbox: tuple[int] = None):
+    def __init__(self, pixels: np.ndarray, time: float):
         self.pixels = pixels
-        self.bbox = bbox
         self.time = time
+        self.bbox = None
 
         self._line = []
-        self._backup = None
 
-    def _select_pixel(self, event, x, y, flags, param):
+    def _draw_line(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDBLCLK:
             if len(self._line) < 2:
                 self._line.append((x, y))
             else:
-                self.pixels = self._backup.copy()
                 self._line = [(x, y)]
-            if len(self._line) == 2:
-                self._backup = self.pixels.copy()
-                self.pixels = cv2.line(self.pixels, self._line[0], self._line[1], (255, 0, 0), 3)
-            return x, y
 
     def get_scale(self):
-        print("Select two points by double clicking, and close this window to continue.")
+        print("Select two points by double clicking, and press enter to continue.")
         cv2.namedWindow("img")
-        cv2.setMouseCallback("img", self._select_pixel)
+        cv2.setMouseCallback("img", self._draw_line)
         try:
             while cv2.getWindowProperty("img", 1) != -1:
-                cv2.imshow("img", self.pixels)
+                cv2.imshow("img", self.numpy)
                 if cv2.waitKey(33) == 13:  # If enter is pressed.
                     break
         except cv2.error:
@@ -60,15 +52,43 @@ class Image:
                 cv2.destroyAllWindows()
                 exit(0)
 
-            cv2.imshow("img", self.pixels)
+            print(self._line)
+            cv2.imshow("img", self.numpy)
             cv2.waitKey(1)
             distance = get_distance(self._line[0], self._line[1])
             cm = float(input("Enter length of the marked line in cm: "))
             Image.scale = cm / distance  # Changes class attribute!
 
-            self.pixels = self._backup.copy()
-            self._backup = None
             cv2.destroyAllWindows()
+
+    @property
+    def center_of_mass(self) -> tuple:
+        return get_bbox_center(self.bbox)
+
+    def get_elongation(self, direction: str) -> float:
+        if direction.lower() == 'x':
+            return (self.center_of_mass[0] - self.center[0]) * self.scale
+        elif direction.lower() == 'y':
+            return (self.center_of_mass[1] - self.center[1]) * self.scale
+        else:
+            raise ValueError(f"Direction '{direction}' is invalid; must be 'x' or 'y'!")
+
+    @property
+    def numpy(self):
+        pixels = self.pixels.copy()
+        #  Apply transformations on the image.
+        if self.bbox:
+            pixels = cv2.rectangle(pixels, rec=self.bbox, color=(255, 0, 0))
+            pixels = cv2.circle(pixels, self.center_of_mass, 2, color=(255, 0, 0), thickness=2)
+            pixels = cv2.putText(pixels, f"({round(self.get_elongation('x'), 1)}|{round(self.get_elongation('y'), 1)})",
+                                 self.center_of_mass, cv2.FONT_HERSHEY_SIMPLEX, .5, (255, 0, 0), 1)
+        if len(self._line) == 2:
+            pixels = cv2.line(self.pixels, self._line[0], self._line[1], (255, 0, 0), 3)
+        return pixels
+
+    @center_of_mass.setter
+    def center_of_mass(self, value):
+        self._center_of_mass = value
 
 
 class Video:
@@ -129,19 +149,11 @@ def main():
         for image in video.watch():
             success, bbox = tracker.update(image.pixels)
             if success:
-                center_of_mass = get_bbox_center(bbox)
-                image.pixels = cv2.circle(image.pixels, center_of_mass, 2, color=(255, 0, 0), thickness=2)
-                image.pixels = cv2.rectangle(image.pixels, rec=bbox, color=(255, 0, 0))
-
-                assert isinstance(image.scale, float) and isinstance(image.center, tuple)
-                x_elongation = (center_of_mass[0] - image.center[0]) * image.scale
-                y_elongation = (center_of_mass[1] - image.center[1]) * image.scale
-                image.pixels = cv2.putText(image.pixels, f"({round(x_elongation, 1)}|{round(y_elongation, 1)})",
-                                           center_of_mass, cv2.FONT_HERSHEY_SIMPLEX, .5, (255, 0, 0), 1)
-                csv_writer.writerow([image.time, x_elongation, y_elongation])
+                image.bbox = bbox
+                csv_writer.writerow([image.time, image.get_elongation('x'), image.get_elongation('y')])
             else:
                 break
-            cv2.imshow("img", image.pixels)
+            cv2.imshow("img", image.numpy)
             cv2.waitKey(1)
 
         cv2.destroyAllWindows()
