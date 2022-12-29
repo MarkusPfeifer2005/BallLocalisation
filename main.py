@@ -9,17 +9,21 @@ from collections.abc import Generator
 import math
 
 
+def get_distance(point1: tuple[int], point2: tuple[int]) -> float:
+    return round(math.sqrt((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2))
+
+
 class Image:
     def __init__(self, pixels: np.ndarray,
                  time: float,
                  center: tuple[int, int] = None,
                  bbox: tuple[int] = None,
-                 pixel_length: float = None):
+                 scale: float = None):
         self.pixels = pixels
         self.center = center
         self.bbox = bbox
         self.time = time
-        self.pixel_length = pixel_length
+        self.scale = scale  # Length per pixel.
 
         self._line = []
         self._backup = None
@@ -36,7 +40,7 @@ class Image:
                 self.pixels = cv2.line(self.pixels, self._line[0], self._line[1], (255, 0, 0), 3)
             return x, y
 
-    def select_pixels(self):
+    def get_scale(self) -> float:
         print("Select two points by double clicking, and close this window to continue.")
         cv2.namedWindow("img")
         cv2.setMouseCallback("img", self._select_pixel)
@@ -54,14 +58,14 @@ class Image:
 
             cv2.imshow("img", self.pixels)
             cv2.waitKey(1)
-            distance = round(
-                math.sqrt((self._line[0][0] - self._line[1][0]) ** 2 + (self._line[0][1] - self._line[1][1]) ** 2))
+            distance = get_distance(self._line[0], self._line[1])
             cm = float(input("Enter length of the marked line in cm: "))
-            self.pixel_length = cm / distance
+            self.scale = cm / distance
 
             self.pixels = self._backup.copy()
             self._backup = None
             cv2.destroyAllWindows()
+        return self.scale
 
 
 class Video:
@@ -90,7 +94,6 @@ class Video:
 
 
 
-
 def main():
     # Define fps.
     fps: float = 100.
@@ -103,6 +106,7 @@ def main():
         print(f"File '{filename}' is invalid. It must be an mp4 file.")
         exit(0)
 
+    # Define Video and Tracker.
     video = Video(filename, fps=fps)
     tracker = cv2.TrackerCSRT_create()
 
@@ -110,10 +114,7 @@ def main():
     image = video.get_frame()
 
     # Get scale.
-    image.select_pixels()
-
-
-
+    scale = image.get_scale()
 
     # Initialize tracker.
     bbox = cv2.selectROI("img", image.pixels, showCrosshair=True)
@@ -126,6 +127,8 @@ def main():
         for image in video.watch():
             success, bbox = tracker.update(image.pixels)
             if success:
+                box_center = (bbox[0] + round(bbox[2]/2), bbox[1] + round(bbox[3]/2))
+                image.pixels = cv2.circle(image.pixels, box_center, 2, color=(255, 0, 0), thickness=2)
                 image.pixels = cv2.rectangle(image.pixels, rec=bbox, color=(255, 0, 0))
                 csv_writer.writerow([image.time, bbox[0] + bbox[1] / 2, bbox[2] + bbox[3] / 2])
             else:
