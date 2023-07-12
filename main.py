@@ -8,6 +8,11 @@ import threading
 from PIL import Image, ImageTk
 import math
 from functools import partial
+import json
+
+from matplotlib import pyplot as plt
+
+from backend_functions import plot_trace
 
 
 class DistanceMenu(tk.Frame):
@@ -199,12 +204,20 @@ class BrightnessTracker(Workspace):
 
         if not os.path.isdir(self.working_directory):
             os.makedirs(self.working_directory)
-        for video_path in [os.path.join(self.working_directory, file) for file in os.listdir(self.working_directory) if
-                           file.endswith(".mp4")]:
+        video_paths = [os.path.join(self.working_directory, file) for file in os.listdir(self.working_directory) if
+                       file.endswith(".mp4")]
+        for video_path in video_paths:
+            new_directory = video_path.replace(".mp4", "")
+            os.mkdir(new_directory)
+            new_video_path = os.path.join(new_directory, os.path.basename(video_path))
+            os.rename(video_path, new_video_path)
+            video_path = new_video_path
             if not self.is_running:
                 break
+            with open(video_path.replace(".mp4", ".json"), "w") as json_file:
+                json_file.write(json.dumps({"x start": self.reference_menu.x_start}))
             with open(video_path.replace(".mp4", ".csv"), "w") as csv_file:
-                csv_file.write("time [s],x [pixels],y [pixels], x [mm], y [mm]\n")
+                csv_file.write("time [s],x [pixels],y [pixels],x [mm],y [mm],\n")
             cap = cv2.VideoCapture(video_path)
             frame_number = 0
             while self.is_running:
@@ -270,6 +283,248 @@ class BrightnessTracker(Workspace):
         self.start_button["state"] = "normal"
 
 
+class TracePlotter(Workspace):
+    def __init__(self, root, change_workspace):
+        super().__init__(root, "images/trace.png", "trace plotter", change_workspace)
+        self.working_directory = "./Videos"
+        self.is_running = False
+
+        self.working_directory_button = tk.Button(self, text="select directory", command=self.open_working_directory)
+        self.working_directory_button.pack(anchor="n", padx=10, pady=10)
+        self.working_directory_display = tk.Label(self, text=f"Selected working directory:\n{self.working_directory}")
+        self.working_directory_display.pack(padx=10, pady=10)
+        self.start_button = tk.Button(self, text="start", background="#090", activebackground="#070",padx=10, pady=10,
+                                      command=self.start)
+        self.start_button.pack()
+
+    def start(self):
+        if not self.is_running:
+            self.start_button["text"] = "stop"
+            self.start_button["background"] = "#f00"
+            self.start_button["activebackground"] = "#c00"
+            self.is_running = True
+            threading.Thread(target=self.plot_traces).start()
+            self.working_directory_button["state"] = "disabled"
+        else:
+            self.stop()
+
+    def stop(self):
+        self.start_button["text"] = "start"
+        self.start_button["background"] = "#090"
+        self.start_button["activebackground"] = "#070"
+        self.is_running = False
+        self.working_directory_button["state"] = "normal"
+
+    def plot_traces(self):
+        video_directory_paths = [os.path.join(self.working_directory, video_directory) for video_directory
+                                 in os.listdir(self.working_directory)
+                                 if os.path.isdir(os.path.join(self.working_directory, video_directory))]
+        for video_directory_path in video_directory_paths:
+            if not self.is_running:
+                break
+            video_path = os.path.join(video_directory_path, os.path.basename(video_directory_path)) + ".mp4"
+            plot_trace(video_path)
+        self.stop()
+
+    def open_working_directory(self):
+        new_directory = filedialog.askdirectory(initialdir=self.working_directory)
+        if new_directory:
+            self.working_directory = new_directory
+            self.working_directory_display["text"] = f"Selected working directory:\n{self.working_directory}"
+
+
+
+# def get_distance(point1: tuple[int, int], point2: tuple[int, int]) -> float:
+#     return round(math.sqrt((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2))
+#
+#
+# def get_bbox_center(bbox: list[int]) -> tuple[int, int]:
+#     return bbox[0] + round(bbox[2] / 2), bbox[1] + round(bbox[3] / 2)
+#
+#
+# class Image:
+#     scale = None  # Length per pixel.
+#     origin = None
+#
+#     def __init__(self, pixels: np.ndarray, time: float):
+#         self.pixels = pixels
+#         self.time = time
+#         self.bbox = None
+#         self._line = []
+#
+#     def _draw_line(self, event, x, y, flags, param):
+#         if event == cv2.EVENT_LBUTTONDBLCLK:
+#             if len(self._line) < 2:
+#                 self._line.append((x, y))
+#             else:
+#                 self._line = [(x, y)]
+#
+#     def set_scale(self):
+#         print("Select two points by double clicking, and press enter to continue.")
+#         cv2.namedWindow("img")
+#         cv2.setMouseCallback("img", self._draw_line)
+#         try:
+#             while cv2.getWindowProperty("img", 1) != -1:
+#                 cv2.imshow("img", self.numpy)
+#                 if cv2.waitKey(33) == 13:  # If enter is pressed.
+#                     break
+#         except cv2.error:
+#             pass
+#         finally:
+#             if len(self._line) != 2:
+#                 print(f"Not exactly two points were selected! Selected: {self._line}.")
+#                 cv2.destroyAllWindows()
+#                 exit(0)
+#
+#             cv2.imshow("img", self.numpy)
+#             cv2.waitKey(1)
+#             distance = get_distance(self._line[0], self._line[1])
+#             cm = float(input("Enter length of the marked line in cm: "))
+#             Image.scale = cm / distance  # Changes class attribute!
+#
+#             cv2.destroyAllWindows()
+#
+#     @property
+#     def center_of_mass(self) -> tuple:
+#         return get_bbox_center(self.bbox)
+#
+#     def get_elongation(self, direction: str) -> float:
+#         if direction.lower() == 'x':
+#             return (self.center_of_mass[0] - self.origin[0]) * self.scale
+#         elif direction.lower() == 'y':
+#             return (self.center_of_mass[1] - self.origin[1]) * self.scale
+#         else:
+#             raise ValueError(f"Direction '{direction}' is invalid; must be 'x' or 'y'!")
+#
+#     @staticmethod
+#     def _select_point(event, x, y, flags, param):
+#         if event == cv2.EVENT_LBUTTONDBLCLK:
+#             Image.origin = (x, y)
+#
+#     def set_origin(self):
+#         print("Select origin by double clicking, and press enter to continue.")
+#         cv2.namedWindow("img")
+#         cv2.setMouseCallback("img", self._select_point)
+#         try:
+#             while cv2.getWindowProperty("img", 1) != -1:
+#                 cv2.imshow("img", self.numpy)
+#                 if cv2.waitKey(33) == 13:  # If enter is pressed.
+#                     break
+#         except cv2.error:
+#             pass
+#         finally:
+#             cv2.destroyAllWindows()
+#             if not self.origin:
+#                 print("No origin was selected!")
+#                 exit(0)
+#
+#     @property
+#     def numpy(self):
+#         pixels = self.pixels.copy()
+#         #  Apply transformations on the image.
+#         if self.bbox:
+#             pixels = cv2.rectangle(pixels, rec=self.bbox, color=(255, 0, 0))
+#             pixels = cv2.circle(pixels, self.center_of_mass, 2, color=(255, 0, 0), thickness=2)
+#             pixels = cv2.putText(pixels, f"({round(self.get_elongation('x'), 1)}|{round(self.get_elongation('y'), 1)})",
+#                                  self.center_of_mass, cv2.FONT_HERSHEY_SIMPLEX, .5, (255, 0, 0), 1)
+#         if len(self._line) == 2:
+#             pixels = cv2.line(pixels, self._line[0], self._line[1], (255, 0, 0), 3)
+#         if self.origin:
+#             length = 3
+#             top_point = (self.origin[0], self.origin[1] + length)
+#             bottom_point = (self.origin[0], self.origin[1] - length)
+#             right_point = (self.origin[0] + length, self.origin[1])
+#             left_point = (self.origin[0] - length, self.origin[1])
+#             pixels = cv2.line(pixels, top_point, bottom_point, (255, 0, 0), 1)
+#             pixels = cv2.line(pixels, left_point, right_point, (255, 0, 0), 1)
+#         return pixels
+#
+#     @center_of_mass.setter
+#     def center_of_mass(self, value):
+#         self._center_of_mass = value
+#
+#
+# class Video:
+#     fps: float = 100.
+#
+#     def __init__(self, path: str):  # Loads whole video into memory!
+#         time_per_image = 1. / self.fps
+#         self.images = []
+#         cap = cv2.VideoCapture(path)
+#         success = True
+#         time = 0
+#         while success:
+#             success, image = cap.read()
+#             if success:
+#                 self.images.append(Image(image, time))
+#                 time += time_per_image
+#
+#     def __iter__(self):
+#         for image in self.images:
+#             yield image
+#
+#     def __getitem__(self, item):
+#         return self.images[item]
+#
+#     def __len__(self):
+#         return self.images.get(cv2.CAP_PROP_FRAME_COUNT)
+#
+#
+# class BBoxTracker(Workspace):
+#     def __init__(self, root, change_workspace):
+#         super().__init__(root, "images/box.png", "bbox tracker (beta)", change_workspace)
+#         self.video_path = ""
+#         self.is_running = False
+#
+#         self.palette = tk.Frame(self, background="#00f")
+#         self.video_path_display = tk.Label(self.palette,
+#                                            text=f"Selected working directory:\n{self.video_path}")
+#         self.video_path_button = tk.Button(self.palette, text="select directory", command=self.open_video)
+#         self.start_button = tk.Button(self.palette, text="start", command=..., background="#090",
+#                                       activebackground="#070", padx=10, pady=10)
+#
+#         self.palette.pack(side="left", anchor="nw", fill="both", expand=False)
+#         self.video_path_display.pack(padx=10, pady=10)
+#         self.video_path_button.pack(anchor="n", padx=10, pady=10)
+#         self.start_button.pack()
+#
+#     def open_video(self):
+#         new_path = filedialog.askopenfilename(initialdir="Videos", filetypes=[("MP4 files", "*.mp4")])
+#         if new_path:
+#             self.video_path = new_path
+#             self.video_path_display["text"] = f"Selected working directory:\n{self.video_path}"
+#
+#     def extract_positions(self):
+#         video = Video(self.video_path)
+#         tracker = cv2.TrackerMIL.create()
+#
+#         video[0].set_scale()
+#         video[-1].set_origin()
+#
+#         # Initialize the tracker.
+#         image = video[0]
+#         bbox = cv2.selectROI("img", image.numpy, showCrosshair=True)
+#         tracker.init(image.pixels, bbox)
+#
+#         with open(self.video_path_button.replace(".mp4", ".csv"), 'w', newline='') as csv_file:
+#             csv_writer = csv.writer(csv_file, delimiter=',')
+#             csv_writer.writerow(["time [s]", "x elongation [cm]", "y elongation [cm]"])
+#             try:
+#                 for image in video:
+#                     success, bbox = tracker.update(image.pixels)
+#                     if success and cv2.getWindowProperty("img", 1) != -1:
+#                         image.bbox = bbox
+#                         csv_writer.writerow([image.time, image.get_elongation('x'), image.get_elongation('y')])
+#                     else:
+#                         break
+#                     cv2.imshow("img", image.numpy)
+#                     cv2.waitKey(1)
+#             except cv2.error:
+#                 print("Program was closed by the user.")
+#             finally:
+#                 cv2.destroyAllWindows()
+#
+
 class App(tk.Tk):
     def __init__(self):
         tk.Tk.__init__(self)
@@ -278,7 +533,8 @@ class App(tk.Tk):
         self.iconphoto(False, self.icon)
 
         workspaces = [
-            BrightnessTracker(self, self.change_workspace)
+            BrightnessTracker(self, self.change_workspace),
+            TracePlotter(self, self.change_workspace)
         ]
         workspaces.insert(0, Home(self, self.change_workspace, workspaces))
         self.workspaces = workspaces

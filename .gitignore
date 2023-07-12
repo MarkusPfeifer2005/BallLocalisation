@@ -4,3 +4,4 @@ dist/
 venv/
 main.spec
 Videos/
+__pycache__/
